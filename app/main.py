@@ -268,3 +268,6 @@ def download_signed_url(doc_id: str, version: Optional[int] = None, expire_secon
         raise HTTPException(status_code=500, detail=f"No se pudo firmar URL: {signed}")
 
     return {"url": signed["signed_url"], "expires_in": expire_seconds}
+@app.get("/")
+def root():
+    return {"ok": True, "service": "Digitalizacion Fabrica API"}
