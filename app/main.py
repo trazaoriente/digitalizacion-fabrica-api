@@ -1,3 +1,4 @@
+# app/main.py
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -9,6 +10,9 @@ import hashlib, json, re, uuid
 from supabase import create_client, Client
 from app.config import settings
 
+# --------------------
+# App & CORS
+# --------------------
 app = FastAPI(title="Digitalizacion Fabrica - API (Simulacro)")
 
 app.add_middleware(
@@ -19,20 +23,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --------------------
+# Supabase client
+# --------------------
 if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE:
     raise RuntimeError("Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE")
 
 sb: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE)
+BUCKET = settings.SUPABASE_BUCKET or "traza-docs"
 
+# --------------------
+# Utils
+# --------------------
 SAFE_CHARS = re.compile(r"[^a-zA-Z0-9._-]+")
 
 def safe_filename(name: str) -> str:
-    name = name.strip().replace(" ", "_")
-    return SAFE_CHARS.sub("_", name)
+    name = (name or "").strip().replace(" ", "_")
+    return SAFE_CHARS.sub("_", name) or "archivo"
 
 def sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
+# --------------------
+# Schemas
+# --------------------
 class DocumentIn(BaseModel):
     title: str
     category_id: Optional[int] = None
@@ -50,6 +64,9 @@ class DocumentListOut(BaseModel):
     items: List[DocumentOut]
     total: int
 
+# --------------------
+# Endpoints
+# --------------------
 @app.get("/health")
 def health():
     return {"ok": True}
@@ -64,30 +81,42 @@ async def create_document(
     note: Optional[str] = Form(None),
     file: UploadFile = File(...),
 ):
+    """
+    Crea un documento (v1) + sube archivo a Supabase Storage (privado).
+    """
     try:
+        # Parse de campos
         tags_list = [t.strip() for t in tags.split(",")] if tags else []
-        extra_dict = json.loads(extra) if extra else {}
+        try:
+            extra_dict = json.loads(extra) if extra else {}
+            if not isinstance(extra_dict, dict):
+                raise ValueError("extra debe ser un objeto JSON")
+        except Exception as je:
+            raise HTTPException(status_code=422, detail=f"Campo 'extra' debe ser JSON válido: {je}")
 
+        # IDs y ruta de almacenamiento
         doc_id = str(uuid.uuid4())
         version = 1
         filename = safe_filename(file.filename or "archivo")
         storage_path = f"{doc_id}/v{version}/{filename}"
 
+        # Subir a Storage
         content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Archivo vacío")
         checksum = sha256_bytes(content)
         mime_type = file.content_type or "application/octet-stream"
 
-        up_res = sb.storage.from_("traza-docs").upload(
+        up_res = sb.storage.from_(BUCKET).upload(
             path=storage_path,
             file=content,
             file_options={"content-type": mime_type, "x-upsert": "false"},
         )
-        # Si el SDK devuelve error, normalmente viene en 'error' o status_code
-        if hasattr(up_res, "status_code") and up_res.status_code >= 400:
-            raise HTTPException(status_code=500, detail=f"Error subiendo a Storage: {up_res}")
+        # Algunos SDK devuelven dict con 'error'
         if isinstance(up_res, dict) and up_res.get("error"):
             raise HTTPException(status_code=500, detail=f"Error subiendo a Storage: {up_res['error']}")
 
+        # Insertar en documents
         doc_payload = {
             "id": doc_id,
             "title": title,
@@ -97,13 +126,15 @@ async def create_document(
             "date_ref": str(date_ref) if date_ref else None,
             "tags": tags_list,
             "extra": extra_dict,
-            "created_by": None,
+            "created_by": None,  # opcional: enlazar con auth.uid()
         }
         ins_doc = sb.table("documents").insert(doc_payload).execute()
-        if ins_doc.error:
-            sb.storage.from_("traza-docs").remove([storage_path])
-            raise HTTPException(status_code=500, detail=f"Error insertando documento: {ins_doc.error}")
+        if not getattr(ins_doc, "data", None):
+            # rollback del archivo si la DB no insertó
+            sb.storage.from_(BUCKET).remove([storage_path])
+            raise HTTPException(status_code=500, detail="DB no devolvió datos al insertar documento")
 
+        # Insertar en document_versions
         ver_payload = {
             "document_id": doc_id,
             "version": version,
@@ -115,10 +146,12 @@ async def create_document(
             "created_by": None,
         }
         ins_ver = sb.table("document_versions").insert(ver_payload).execute()
-        if ins_ver.error:
-            raise HTTPException(status_code=500, detail=f"Error insertando versión: {ins_ver.error}")
+        if not getattr(ins_ver, "data", None):
+            raise HTTPException(status_code=500, detail="DB no devolvió datos al insertar versión")
 
+        # Respuesta
         return {**doc_payload, "date_ref": date_ref}
+
     except HTTPException:
         raise
     except Exception as e:
@@ -126,14 +159,18 @@ async def create_document(
 
 @app.get("/documents", response_model=DocumentListOut)
 def list_documents(
-    q: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, description="Búsqueda por título (ilike)"),
     category_id: Optional[int] = Query(None),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
+    """
+    Lista documentos con filtros simples.
+    """
     query = sb.table("documents").select("*", count="exact").order("created_at", desc=True)
+
     if q:
         query = query.ilike("title", f"%{q}%")
     if category_id is not None:
@@ -142,49 +179,55 @@ def list_documents(
         query = query.gte("date_ref", str(date_from))
     if date_to:
         query = query.lte("date_ref", str(date_to))
+
     res = query.range(offset, offset + limit - 1).execute()
-    if res.error:
-        raise HTTPException(status_code=500, detail=str(res.error))
-    rows = res.data or []
-    total = res.count or len(rows)
+    rows = getattr(res, "data", []) or []
+    total = getattr(res, "count", None)
+    if total is None:
+        total = len(rows)
     return {"items": rows, "total": total}
 
 @app.get("/documents/{doc_id}", response_model=DocumentOut)
 def get_document(doc_id: str):
-    doc = sb.table("documents").select("*").eq("id", doc_id).single().execute()
-    if doc.error or not doc.data:
+    res = sb.table("documents").select("*").eq("id", doc_id).single().execute()
+    data = getattr(res, "data", None)
+    if not data:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
-    return doc.data
+    return data
 
 @app.get("/documents/{doc_id}/versions")
 def list_versions(doc_id: str):
     res = sb.table("document_versions").select("*").eq("document_id", doc_id).order("version", desc=True).execute()
-    if res.error:
-        raise HTTPException(status_code=500, detail=str(res.error))
-    return res.data
+    return getattr(res, "data", []) or []
 
 @app.post("/documents/{doc_id}/versions")
-async def add_version(doc_id: str, note: Optional[str] = Form(None), file: UploadFile = File(...)):
-    doc = sb.table("documents").select("*").eq("id", doc_id).single().execute()
-    if doc.error or not doc.data:
+async def add_version(
+    doc_id: str,
+    note: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+):
+    # Traer doc
+    doc_res = sb.table("documents").select("*").eq("id", doc_id).single().execute()
+    doc = getattr(doc_res, "data", None)
+    if not doc:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
 
-    curr = int(doc.data["current_version"])
+    curr = int(doc["current_version"])
     new_v = curr + 1
 
     filename = safe_filename(file.filename or f"v{new_v}")
     storage_path = f"{doc_id}/v{new_v}/{filename}"
     content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Archivo vacío")
     checksum = sha256_bytes(content)
     mime_type = file.content_type or "application/octet-stream"
 
-    up_res = sb.storage.from_("traza-docs").upload(
+    up_res = sb.storage.from_(BUCKET).upload(
         path=storage_path,
         file=content,
         file_options={"content-type": mime_type, "x-upsert": "false"},
     )
-    if hasattr(up_res, "status_code") and up_res.status_code >= 400:
-        raise HTTPException(status_code=500, detail=f"Error subiendo a Storage: {up_res}")
     if isinstance(up_res, dict) and up_res.get("error"):
         raise HTTPException(status_code=500, detail=f"Error subiendo a Storage: {up_res['error']}")
 
@@ -197,26 +240,30 @@ async def add_version(doc_id: str, note: Optional[str] = Form(None), file: Uploa
         "mime_type": mime_type,
         "note": note,
     }).execute()
-    if ins_ver.error:
-        raise HTTPException(status_code=500, detail=f"Error insertando versión: {ins_ver.error}")
+    if not getattr(ins_ver, "data", None):
+        raise HTTPException(status_code=500, detail="DB no devolvió datos al insertar versión")
 
     up_doc = sb.table("documents").update({"current_version": new_v}).eq("id", doc_id).execute()
-    if up_doc.error:
-        raise HTTPException(status_code=500, detail=f"Error actualizando documento: {up_doc.error}")
+    if not getattr(up_doc, "data", None):
+        raise HTTPException(status_code=500, detail="DB no devolvió datos al actualizar documento")
 
     return {"ok": True, "version": new_v}
 
 @app.get("/documents/{doc_id}/download")
 def download_signed_url(doc_id: str, version: Optional[int] = None, expire_seconds: int = 3600):
+    """
+    Devuelve un link firmado temporal para descargar (no público).
+    """
     q = sb.table("document_versions").select("storage_path,version").eq("document_id", doc_id)
     if version is not None:
         q = q.eq("version", version)
     res = q.order("version", desc=True).limit(1).execute()
-    if res.error or not res.data:
+    rows = getattr(res, "data", []) or []
+    if not rows:
         raise HTTPException(status_code=404, detail="Versión no encontrada")
 
-    storage_path = res.data[0]["storage_path"]
-    signed = sb.storage.from_("traza-docs").create_signed_url(storage_path, expire_seconds)
+    storage_path = rows[0]["storage_path"]
+    signed = sb.storage.from_(BUCKET).create_signed_url(storage_path, expire_seconds)
     if not signed or "signed_url" not in signed:
         raise HTTPException(status_code=500, detail=f"No se pudo firmar URL: {signed}")
 
