@@ -29,3 +29,8 @@ curl "http://localhost:8000/batches?material_id=<material_id>"
 # Soft delete de un batch
 curl -X DELETE http://localhost:8000/batches/<batch_id>
 ```
+
+## Fallback de DB (sandbox)
+
+- En desarrollo/sandbox (SQLite) el servicio crea tablas automáticamente al arrancar.
+- En producción se recomienda usar Alembic; el fallback es idempotente y seguro en ambos casos.
