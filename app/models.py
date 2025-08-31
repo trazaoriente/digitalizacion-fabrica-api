@@ -17,7 +17,8 @@ from sqlalchemy import (
     Boolean,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import JSON
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -63,14 +64,14 @@ class Document(Base):
 
     date_ref: Mapped[date] = mapped_column(Date, nullable=False, index=True)
 
-    # JSONB: tags como lista de strings
+    # JSON: tags como lista de strings
     tags: Mapped[List[str]] = mapped_column(
-        JSONB, nullable=False, default=list
+        JSON, nullable=False, default=list
     )
 
-    # JSONB: extra como objeto libre (dict)
+    # JSON: extra como objeto libre (dict)
     extra: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, default=dict
+        JSON, nullable=False, default=dict
     )
 
     # <- Campo que necesitabas persistir
