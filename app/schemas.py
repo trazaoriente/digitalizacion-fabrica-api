@@ -1,7 +1,7 @@
 # app/schemas.py
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -59,6 +59,67 @@ class DocumentList(BaseModel):
     """
     items: List[DocumentOut]
     total: int
+
+    class Config:
+        from_attributes = True
+
+
+# ---------------------------------------------------------------------
+# Material Schemas
+# ---------------------------------------------------------------------
+
+class MaterialCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+class MaterialRead(BaseModel):
+    id: UUID
+    name: str
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class MaterialUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ---------------------------------------------------------------------
+# Batch Schemas
+# ---------------------------------------------------------------------
+
+class BatchCreate(BaseModel):
+    material_id: UUID
+    batch_code: str
+    quantity: int = Field(ge=0)
+    production_date: date
+
+
+class BatchRead(BaseModel):
+    id: UUID
+    material_id: UUID
+    batch_code: str
+    quantity: int
+    production_date: date
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class BatchUpdate(BaseModel):
+    batch_code: Optional[str] = None
+    quantity: Optional[int] = Field(default=None, ge=0)
+    production_date: Optional[date] = None
 
     class Config:
         from_attributes = True
