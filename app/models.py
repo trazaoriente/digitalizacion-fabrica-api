@@ -14,6 +14,8 @@ from sqlalchemy import (
     CheckConstraint,
     func,
     Index,
+    Boolean,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -111,4 +113,54 @@ class Document(Base):
         return (
             f"<Document id={self.id} title={self.title!r} "
             f"cat={self.category_id} date_ref={self.date_ref} status={self.status}>"
+        )
+
+
+# ---------------------------
+# Materials & Batches
+# ---------------------------
+
+
+class Material(Base):
+    __tablename__ = "materials"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    batches: Mapped[List["Batch"]] = relationship(
+        back_populates="material", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debug only
+        return f"<Material id={self.id} name={self.name!r} active={self.is_active}>"
+
+
+class Batch(Base):
+    __tablename__ = "batches"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    material_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("materials.id", ondelete="RESTRICT"), index=True
+    )
+    batch_code: Mapped[str] = mapped_column(String(100), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    production_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    material: Mapped["Material"] = relationship(back_populates="batches")
+
+    __table_args__ = (
+        UniqueConstraint("material_id", "batch_code", name="uq_batch_material_code"),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debug only
+        return (
+            f"<Batch id={self.id} material_id={self.material_id} "
+            f"code={self.batch_code} active={self.is_active}>"
         )

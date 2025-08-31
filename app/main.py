@@ -9,6 +9,8 @@ import hashlib, json, re, uuid
 
 from supabase import create_client, Client
 from app.config import settings
+from app.database import Base, engine
+from app import models
 
 # --------------------
 # App & CORS
@@ -24,13 +26,25 @@ app.add_middleware(
 )
 
 # --------------------
-# Supabase client
+# Supabase client (optional)
 # --------------------
-if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE:
-    raise RuntimeError("Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE")
-
-sb: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE)
+sb: Client | None = None
+if settings.SUPABASE_URL and settings.SUPABASE_SERVICE_ROLE:
+    sb = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE)
 BUCKET = settings.SUPABASE_BUCKET or "traza-docs"
+
+
+# --------------------
+# DB init (fallback a metadata.create_all)
+# --------------------
+try:
+    from alembic.config import Config
+    from alembic import command
+
+    alembic_cfg = Config("alembic.ini")
+    command.upgrade(alembic_cfg, "head")
+except Exception:
+    Base.metadata.create_all(bind=engine)
 
 # --------------------
 # Utils
@@ -271,3 +285,10 @@ def download_signed_url(doc_id: str, version: Optional[int] = None, expire_secon
 @app.get("/")
 def root():
     return {"ok": True, "service": "Digitalizacion Fabrica API"}
+
+
+# Routers
+from app.routers import materials, batches
+
+app.include_router(materials.router, prefix="/materials", tags=["materials"])
+app.include_router(batches.router, prefix="/batches", tags=["batches"])

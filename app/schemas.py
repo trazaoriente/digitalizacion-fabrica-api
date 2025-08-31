@@ -62,3 +62,61 @@ class DocumentList(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ---------------------------------------------------------------------
+# Material Schemas
+# ---------------------------------------------------------------------
+
+
+class MaterialCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    is_active: bool = True
+
+
+class MaterialRead(MaterialCreate):
+    id: str
+
+    class Config:
+        from_attributes = True
+
+
+class MaterialUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ---------------------------------------------------------------------
+# Batch Schemas
+# ---------------------------------------------------------------------
+
+
+class BatchCreate(BaseModel):
+    material_id: str
+    batch_code: str
+    quantity: int
+    production_date: date
+    is_active: bool = True
+
+
+class BatchRead(BatchCreate):
+    id: str
+
+    class Config:
+        from_attributes = True
+
+
+class BatchUpdate(BaseModel):
+    material_id: Optional[str] = None
+    batch_code: Optional[str] = None
+    quantity: Optional[int] = None
+    production_date: Optional[date] = None
+    is_active: Optional[bool] = None
+
+    class Config:
+        from_attributes = True
