@@ -9,7 +9,7 @@ import hashlib, json, re, uuid, os
 
 from supabase import create_client, Client
 from app.config import settings
-from app.database import Base, engine
+from app import models  # registra modelos en Base.metadata
 from app.routers import materials, batches
 
 # --------------------
@@ -49,14 +49,18 @@ def ensure_supabase() -> Client:
 
 @app.on_event("startup")
 def startup_event() -> None:
+    # Intentar migrar con Alembic; SIEMPRE asegurar tablas con create_all
     try:
         from alembic import command
         from alembic.config import Config
-
         alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
         command.upgrade(alembic_cfg, "head")
-    except Exception:
-        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Alembic upgrade falló: %s", e)
+    finally:
+        from app.database import Base, engine
+        Base.metadata.create_all(bind=engine)  # crea lo que falte, idempotente
 
 
 app.include_router(materials.router, prefix="/materials", tags=["materials"])
