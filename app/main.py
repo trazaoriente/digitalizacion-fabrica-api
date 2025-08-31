@@ -56,6 +56,8 @@ def startup_event() -> None:
         alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
         command.upgrade(alembic_cfg, "head")
     except Exception:
+        # Alembic no está disponible o falló: creamos tablas directamente
+        import app.models  # noqa: F401 - asegura registro de modelos
         Base.metadata.create_all(bind=engine)
 
 
