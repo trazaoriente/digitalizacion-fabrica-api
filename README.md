@@ -32,5 +32,7 @@ curl -X DELETE http://localhost:8000/batches/<batch_id>
 
 ## Fallback de DB (sandbox)
 
-- En desarrollo/sandbox (SQLite) el servicio crea tablas automáticamente al arrancar.
+- En desarrollo/sandbox se usa SQLite y por defecto **no** se corren migraciones.
+- El servicio siempre crea tablas automáticamente al arrancar.
+- Si se desean forzar migraciones de Alembic, setear `RUN_MIGRATIONS=true`.
 - En producción se recomienda usar Alembic; el fallback es idempotente y seguro en ambos casos.

@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from datetime import date
 from typing import Optional, List, Dict, Any
 from uuid import UUID
-import hashlib, json, re, uuid, os
+import hashlib, json, re, uuid, os, logging
 
 from supabase import create_client, Client
 from app.config import settings
@@ -49,18 +49,30 @@ def ensure_supabase() -> Client:
 
 @app.on_event("startup")
 def startup_event() -> None:
-    # Intentar migrar con Alembic; SIEMPRE asegurar tablas con create_all
+    """
+    Opcionalmente corre migraciones con Alembic y siempre asegura
+    que existan las tablas necesarias mediante ``create_all``.
+    Nunca propaga excepciones.
+    """
     try:
-        from alembic import command
-        from alembic.config import Config
-        alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
-        command.upgrade(alembic_cfg, "head")
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning("Alembic upgrade falló: %s", e)
+        if os.getenv("RUN_MIGRATIONS", "false").lower() == "true":
+            try:
+                from alembic import command
+                from alembic.config import Config
+
+                alembic_cfg = Config(
+                    os.path.join(os.path.dirname(__file__), "..", "alembic.ini")
+                )
+                command.upgrade(alembic_cfg, "head")
+            except Exception as e:  # pragma: no cover - logueado
+                logging.getLogger(__name__).warning(
+                    "Alembic upgrade falló: %s", e
+                )
     finally:
         from app.database import Base, engine
-        Base.metadata.create_all(bind=engine)  # crea lo que falte, idempotente
+
+        Base.metadata.create_all(bind=engine)
+        logging.getLogger(__name__).info("DB_FALLBACK_RAN")
 
 
 app.include_router(materials.router, prefix="/materials", tags=["materials"])
