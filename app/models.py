@@ -14,6 +14,8 @@ from sqlalchemy import (
     CheckConstraint,
     func,
     Index,
+    Boolean,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -112,3 +114,53 @@ class Document(Base):
             f"<Document id={self.id} title={self.title!r} "
             f"cat={self.category_id} date_ref={self.date_ref} status={self.status}>"
         )
+
+
+# ---------------------------
+# Material
+# ---------------------------
+class Material(Base):
+    __tablename__ = "materials"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+
+    batches: Mapped[list["Batch"]] = relationship(
+        back_populates="material", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr simple
+        return f"<Material id={self.id} name={self.name!r}>"
+
+
+# ---------------------------
+# Batch
+# ---------------------------
+class Batch(Base):
+    __tablename__ = "batches"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    material_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("materials.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    batch_code: Mapped[str] = mapped_column(String(100), nullable=False)
+    quantity: Mapped[int] = mapped_column(
+        Integer, CheckConstraint("quantity >= 0"), nullable=False
+    )
+    production_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+
+    material: Mapped["Material"] = relationship(back_populates="batches")
+
+    __table_args__ = (
+        UniqueConstraint("material_id", "batch_code", name="uq_batches_material_code"),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr simple
+        return f"<Batch id={self.id} material_id={self.material_id} code={self.batch_code!r}>"
