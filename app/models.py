@@ -12,6 +12,7 @@ from sqlalchemy import (
     Text,
     ForeignKey,
     CheckConstraint,
+    UniqueConstraint,
     func,
     Index,
 )
@@ -111,4 +112,68 @@ class Document(Base):
         return (
             f"<Document id={self.id} title={self.title!r} "
             f"cat={self.category_id} date_ref={self.date_ref} status={self.status}>"
+        )
+
+
+# ---------------------------
+# Material
+# ---------------------------
+class Material(Base):
+    __tablename__ = "materials"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    batches: Mapped[list["Batch"]] = relationship(
+        back_populates="material", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Material id={self.id} name={self.name!r}>"
+
+
+# ---------------------------
+# Batch
+# ---------------------------
+class Batch(Base):
+    __tablename__ = "batches"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    material_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("materials.id", ondelete="CASCADE"), nullable=False
+    )
+    batch_code: Mapped[str] = mapped_column(String(120), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    production_date: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    material: Mapped["Material"] = relationship(back_populates="batches")
+
+    __table_args__ = (
+        CheckConstraint("quantity >= 0", name="ck_batches_quantity_nonnegative"),
+        UniqueConstraint(
+            "material_id", "batch_code", name="uq_batches_material_code"
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<Batch id={self.id} material_id={self.material_id} "
+            f"code={self.batch_code!r} qty={self.quantity}>"
         )

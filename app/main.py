@@ -9,6 +9,7 @@ import hashlib, json, re, uuid
 
 from supabase import create_client, Client
 from app.config import settings
+from app.routers import materials, batches
 
 # --------------------
 # App & CORS
@@ -22,6 +23,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(materials.router, prefix="/materials", tags=["materials"])
+app.include_router(batches.router, prefix="/batches", tags=["batches"])
 
 # --------------------
 # Supabase client
