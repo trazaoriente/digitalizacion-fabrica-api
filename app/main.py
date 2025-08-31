@@ -5,10 +5,12 @@ from pydantic import BaseModel, Field
 from datetime import date
 from typing import Optional, List, Dict, Any
 from uuid import UUID
-import hashlib, json, re, uuid
+import hashlib, json, re, uuid, os
 
 from supabase import create_client, Client
 from app.config import settings
+from app.database import Base, engine
+from app.routers import materials, batches
 
 # --------------------
 # App & CORS
@@ -26,11 +28,39 @@ app.add_middleware(
 # --------------------
 # Supabase client
 # --------------------
-if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE:
-    raise RuntimeError("Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE")
-
-sb: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE)
+sb: Optional[Client] = None
 BUCKET = settings.SUPABASE_BUCKET or "traza-docs"
+if settings.SUPABASE_ENABLED:
+    if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE:
+        raise RuntimeError("Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE")
+    sb = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE)
+
+
+def ensure_supabase() -> Client:
+    if sb is None:
+        raise HTTPException(status_code=503, detail="Supabase deshabilitado")
+    return sb
+
+
+# --------------------
+# Startup DB / Routers
+# --------------------
+
+
+@app.on_event("startup")
+def startup_event() -> None:
+    try:
+        from alembic import command
+        from alembic.config import Config
+
+        alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
+        command.upgrade(alembic_cfg, "head")
+    except Exception:
+        Base.metadata.create_all(bind=engine)
+
+
+app.include_router(materials.router, prefix="/materials", tags=["materials"])
+app.include_router(batches.router, prefix="/batches", tags=["batches"])
 
 # --------------------
 # Utils
@@ -84,6 +114,7 @@ async def create_document(
     """
     Crea un documento (v1) + sube archivo a Supabase Storage (privado).
     """
+    ensure_supabase()
     try:
         # Parse de campos
         tags_list = [t.strip() for t in tags.split(",")] if tags else []
@@ -166,6 +197,7 @@ def list_documents(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
+    ensure_supabase()
     """
     Lista documentos con filtros simples.
     """
@@ -189,6 +221,7 @@ def list_documents(
 
 @app.get("/documents/{doc_id}", response_model=DocumentOut)
 def get_document(doc_id: str):
+    ensure_supabase()
     res = sb.table("documents").select("*").eq("id", doc_id).single().execute()
     data = getattr(res, "data", None)
     if not data:
@@ -197,6 +230,7 @@ def get_document(doc_id: str):
 
 @app.get("/documents/{doc_id}/versions")
 def list_versions(doc_id: str):
+    ensure_supabase()
     res = sb.table("document_versions").select("*").eq("document_id", doc_id).order("version", desc=True).execute()
     return getattr(res, "data", []) or []
 
@@ -206,6 +240,7 @@ async def add_version(
     note: Optional[str] = Form(None),
     file: UploadFile = File(...),
 ):
+    ensure_supabase()
     # Traer doc
     doc_res = sb.table("documents").select("*").eq("id", doc_id).single().execute()
     doc = getattr(doc_res, "data", None)
@@ -254,6 +289,7 @@ def download_signed_url(doc_id: str, version: Optional[int] = None, expire_secon
     """
     Devuelve un link firmado temporal para descargar (no público).
     """
+    ensure_supabase()
     q = sb.table("document_versions").select("storage_path,version").eq("document_id", doc_id)
     if version is not None:
         q = q.eq("version", version)
