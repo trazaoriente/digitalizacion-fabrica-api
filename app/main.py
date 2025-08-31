@@ -3,14 +3,16 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from datetime import date
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, TYPE_CHECKING
 from uuid import UUID
 import hashlib, json, re, uuid, os, logging
 
-from supabase import create_client, Client
 from app.config import settings
 from app import models  # registra modelos en Base.metadata
 from app.routers import materials, batches
+
+if TYPE_CHECKING:
+    from supabase import Client
 
 # --------------------
 # App & CORS
@@ -28,15 +30,17 @@ app.add_middleware(
 # --------------------
 # Supabase client
 # --------------------
-sb: Optional[Client] = None
+sb: Optional["Client"] = None
 BUCKET = settings.SUPABASE_BUCKET or "traza-docs"
 if settings.SUPABASE_ENABLED:
+    from supabase import create_client
+
     if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE:
         raise RuntimeError("Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE")
     sb = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE)
 
 
-def ensure_supabase() -> Client:
+def ensure_supabase() -> "Client":
     if sb is None:
         raise HTTPException(status_code=503, detail="Supabase deshabilitado")
     return sb
@@ -70,6 +74,7 @@ def startup_event() -> None:
                 )
     finally:
         from app.database import Base, engine
+        from app import models  # noqa: F401 - asegure que modelos estén registrados
 
         Base.metadata.create_all(bind=engine)
         logging.getLogger(__name__).info("DB_FALLBACK_RAN")
